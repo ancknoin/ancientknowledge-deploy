@@ -1,0 +1,87 @@
+name: Sync & Deploy
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  HUGO_VERSION: "0.153.0"
+
+jobs:
+  sync-build-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.MAIN_REPO }}
+          token: ${{ secrets.AK_MAIN_REPO_PAT }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: tools/notion-sync/go.mod
+          cache-dependency-path: tools/notion-sync/go.sum
+
+      - name: Export content
+        # -out must climb back to the repo root's content/ -- CWD here is
+        # tools/notion-sync, and the bare default ("content") would write
+        # into tools/notion-sync/content instead.
+        working-directory: tools/notion-sync
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_WORKS_REGISTRY_ID: ${{ secrets.NOTION_WORKS_REGISTRY_ID }}
+          NOTION_TAXONOMY_ID: ${{ secrets.NOTION_TAXONOMY_ID }}
+        run: |
+          go run ./cmd/notion-sync export -out ../../content -v
+
+      - name: Commit content
+        run: |
+          git config user.name "notion-sync"
+          git config user.email "actions@users.noreply.github.com"
+          git add content data
+          if git diff --cached --quiet; then
+            echo "No content changes."
+          else
+            git commit -m "content: full export $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git push
+          fi
+
+      - name: Install Hugo
+        run: |
+          curl -fsSL -o /tmp/hugo.deb \
+            "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
+          sudo dpkg -i /tmp/hugo.deb
+          hugo version
+
+      - name: Build
+        run: hugo --gc --minify --environment production
+
+      - name: Deploy
+        env:
+          RCLONE_CONFIG_R2_TYPE: s3
+          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.RCLONE_CONFIG_R2_ACCESS_KEY_ID }}
+          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
+          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+          rclone sync public/ "r2:${{ secrets.R2_BUCKET }}" \
+            --checksum --fast-list \
+            --transfers 32 --checkers 32 \
+            --retries 5 --low-level-retries 20 --retries-sleep 10s \
+            --header-upload "Cache-Control: public, max-age=3600, stale-while-revalidate=86400" \
+            --stats-one-line
+
+      - name: Purge cache
+        env:
+          PURGE_URL: ${{ secrets.PURGE_ASSET_URL }}
+        run: |
+          curl -fsS -X POST \
+            "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
+            -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            --data "{\"files\":[\"$PURGE_URL\"]}"
