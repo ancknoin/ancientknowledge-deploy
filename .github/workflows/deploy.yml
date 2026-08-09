@@ -30,7 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          repository: ${{ vars.MAIN_REPO }}
+          repository: ${{ secrets.MAIN_REPO }}
           token: ${{ secrets.AK_MAIN_REPO_PAT }}
 
       - name: Set up Go
