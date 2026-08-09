@@ -2,6 +2,19 @@ name: Sync & Deploy
 
 on:
   workflow_dispatch:
+    inputs:
+      skip_cms_sync:
+        description: "Skip CMS sync (build & deploy existing content only)"
+        type: boolean
+        default: false
+      cms_sync_scope:
+        description: "Limit sync to these work slugs, comma-separated (e.g. hanuman-chalisa,ganesh-chalisa). Empty = full sync."
+        type: string
+        default: ""
+      deploy:
+        description: "Build and deploy the site"
+        type: boolean
+        default: true
 
 concurrency:
   group: deploy
@@ -21,24 +34,25 @@ jobs:
           token: ${{ secrets.AK_MAIN_REPO_PAT }}
 
       - name: Set up Go
+        if: ${{ !inputs.skip_cms_sync }}
         uses: actions/setup-go@v5
         with:
           go-version-file: tools/notion-sync/go.mod
           cache-dependency-path: tools/notion-sync/go.sum
 
       - name: Export content
-        # -out must climb back to the repo root's content/ -- CWD here is
-        # tools/notion-sync, and the bare default ("content") would write
-        # into tools/notion-sync/content instead.
+        if: ${{ !inputs.skip_cms_sync }}
         working-directory: tools/notion-sync
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_WORKS_REGISTRY_ID: ${{ secrets.NOTION_WORKS_REGISTRY_ID }}
           NOTION_TAXONOMY_ID: ${{ secrets.NOTION_TAXONOMY_ID }}
+          SYNC_SCOPE: ${{ inputs.cms_sync_scope }}
         run: |
-          go run ./cmd/notion-sync export -out ../../content -v
+          go run ./cmd/notion-sync export -out ../../content -only "$SYNC_SCOPE" -v
 
-      - name: Commit content
+      - name: Push synced content
+        if: ${{ !inputs.skip_cms_sync }}
         run: |
           git config user.name "notion-sync"
           git config user.email "actions@users.noreply.github.com"
@@ -46,11 +60,12 @@ jobs:
           if git diff --cached --quiet; then
             echo "No content changes."
           else
-            git commit -m "content: full export $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            git commit -m "content: sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push
           fi
 
       - name: Install Hugo
+        if: ${{ inputs.deploy }}
         run: |
           curl -fsSL -o /tmp/hugo.deb \
             "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
@@ -58,9 +73,11 @@ jobs:
           hugo version
 
       - name: Build
+        if: ${{ inputs.deploy }}
         run: hugo --gc --minify --environment production
 
       - name: Deploy
+        if: ${{ inputs.deploy }}
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -77,6 +94,7 @@ jobs:
             --stats-one-line
 
       - name: Purge cache
+        if: ${{ inputs.deploy }}
         env:
           PURGE_URL: ${{ secrets.PURGE_ASSET_URL }}
         run: |
