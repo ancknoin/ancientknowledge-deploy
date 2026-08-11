@@ -34,7 +34,7 @@ jobs:
           token: ${{ secrets.AK_MAIN_REPO_PAT }}
 
       - name: Set up Go
-        if: ${{ !inputs.skip_cms_sync }}
+        if: ${{ !inputs.skip_cms_sync || inputs.deploy }}
         uses: actions/setup-go@v5
         with:
           go-version-file: tools/notion-sync/go.mod
@@ -63,6 +63,11 @@ jobs:
             git commit -m "content: sync $(date -u +%Y-%m-%dT%H:%M:%SZ)"
             git push
           fi
+
+      - name: Generate llms.txt
+        if: ${{ inputs.deploy }}
+        working-directory: tools/notion-sync
+        run: go run ./cmd/gen-llms-txt
 
       - name: Install Hugo
         if: ${{ inputs.deploy }}
