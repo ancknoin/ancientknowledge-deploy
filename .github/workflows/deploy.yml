@@ -1,6 +1,8 @@
 name: Sync & Deploy
 
 on:
+  schedule:
+    - cron: "30 0 * * *" # 06:00 IST daily
   workflow_dispatch:
     inputs:
       skip_cms_sync:
@@ -14,7 +16,7 @@ on:
       since_hours:
         description: "Only sync works with a page edited in the last N hours (e.g. 24, 168). Empty = full sync. Mutually exclusive with cms_sync_scope."
         type: string
-        default: ""
+        default: "24"
       deploy:
         description: "Build and deploy the site"
         type: boolean
@@ -38,7 +40,7 @@ jobs:
           token: ${{ secrets.AK_MAIN_REPO_PAT }}
 
       - name: Set up Go
-        if: ${{ !inputs.skip_cms_sync || inputs.deploy }}
+        if: ${{ !inputs.skip_cms_sync || github.event_name != 'workflow_dispatch' || inputs.deploy }}
         uses: actions/setup-go@v5
         with:
           go-version-file: tools/notion-sync/go.mod
@@ -52,7 +54,7 @@ jobs:
           NOTION_WORKS_REGISTRY_ID: ${{ secrets.NOTION_WORKS_REGISTRY_ID }}
           NOTION_TAXONOMY_ID: ${{ secrets.NOTION_TAXONOMY_ID }}
           SYNC_SCOPE: ${{ inputs.cms_sync_scope }}
-          SINCE_HOURS: ${{ inputs.since_hours }}
+          SINCE_HOURS: ${{ github.event_name == 'schedule' && '24' || inputs.since_hours }}
         run: |
           set -o pipefail
           if [ -n "$SINCE_HOURS" ] && [ -n "$SYNC_SCOPE" ]; then
@@ -111,17 +113,17 @@ jobs:
           fi
 
       - name: Generate llms.txt
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         working-directory: tools/notion-sync
         run: go run ./cmd/gen-llms-txt
 
       - name: Generate search index
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         working-directory: tools/notion-sync
         run: go run ./cmd/gen-search-index
 
       - name: Install Hugo
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: |
           curl -fsSL -o /tmp/hugo.deb \
             "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_linux-amd64.deb"
@@ -129,11 +131,11 @@ jobs:
           hugo version
 
       - name: Build
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: hugo --gc --minify --environment production
 
       - name: Deploy
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         env:
           RCLONE_CONFIG_R2_TYPE: s3
           RCLONE_CONFIG_R2_PROVIDER: Cloudflare
@@ -165,7 +167,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Purge cache
-        if: ${{ inputs.deploy }}
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: |
           curl -fsS -X POST \
             "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
