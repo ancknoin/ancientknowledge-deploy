@@ -11,6 +11,10 @@ on:
         description: "Limit sync to these work slugs, comma-separated (e.g. hanuman-chalisa,ganesh-chalisa). Empty = full sync."
         type: string
         default: ""
+      since_hours:
+        description: "Only sync works with a page edited in the last N hours (e.g. 24, 168). Empty = full sync. Mutually exclusive with cms_sync_scope."
+        type: string
+        default: ""
       deploy:
         description: "Build and deploy the site"
         type: boolean
@@ -48,8 +52,50 @@ jobs:
           NOTION_WORKS_REGISTRY_ID: ${{ secrets.NOTION_WORKS_REGISTRY_ID }}
           NOTION_TAXONOMY_ID: ${{ secrets.NOTION_TAXONOMY_ID }}
           SYNC_SCOPE: ${{ inputs.cms_sync_scope }}
+          SINCE_HOURS: ${{ inputs.since_hours }}
         run: |
-          go run ./cmd/notion-sync export -out ../../content -only "$SYNC_SCOPE" -v
+          set -o pipefail
+          if [ -n "$SINCE_HOURS" ] && [ -n "$SYNC_SCOPE" ]; then
+            echo "cms_sync_scope and since_hours are mutually exclusive -- set only one." >&2
+            exit 1
+          fi
+          if [ -n "$SINCE_HOURS" ]; then
+            go run ./cmd/notion-sync export -out ../../content -since "${SINCE_HOURS}h" -v 2>&1 | tee /tmp/export.log
+          else
+            go run ./cmd/notion-sync export -out ../../content -only "$SYNC_SCOPE" -v 2>&1 | tee /tmp/export.log
+          fi
+          {
+            echo "## Notion sync"
+            echo '```'
+            grep -E "starting (incremental|scoped|full) export|no pages edited in window|incremental export scoped|export complete" /tmp/export.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Content diff
+        if: ${{ !inputs.skip_cms_sync }}
+        run: |
+          {
+            echo "## Content changed this run"
+          } >> "$GITHUB_STEP_SUMMARY"
+          CHANGED=$(git status --porcelain=v1 -- content data)
+          if [ -z "$CHANGED" ]; then
+            echo "None." >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo '```'
+              echo "$CHANGED"
+              echo '```'
+              echo "Candidate pages (pre-build; the actual R2 upload set is decided by content hash at deploy time, not this list):"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "$CHANGED" | cut -c4- | grep '^content/' | while IFS= read -r p; do
+              rel="${p#content/}"
+              rel="${rel%/_index.md}"
+              rel="${rel%/index.md}"
+              echo "/${rel}/"
+            done >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Push synced content
         if: ${{ !inputs.skip_cms_sync }}
@@ -95,13 +141,28 @@ jobs:
           RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.RCLONE_CONFIG_R2_SECRET_ACCESS_KEY }}
           RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.RCLONE_CONFIG_R2_ENDPOINT }}
         run: |
+          set -o pipefail
           curl -fsSL https://rclone.org/install.sh | sudo bash
           rclone sync public/ "r2:${{ secrets.R2_BUCKET }}" \
             --checksum --fast-list \
             --transfers 32 --checkers 32 \
             --retries 5 --low-level-retries 20 --retries-sleep 10s \
             --header-upload "Cache-Control: public, max-age=3600, stale-while-revalidate=86400" \
-            --stats-one-line
+            -v --stats-one-line 2>&1 | tee /tmp/rclone.log
+          {
+            echo "## Deployed to R2"
+            CHANGED_R2=$(grep -E ': (Copied|Deleted)' /tmp/rclone.log || true)
+            if [ -z "$CHANGED_R2" ]; then
+              echo "No files changed."
+            else
+              echo '```'
+              echo "$CHANGED_R2"
+              echo '```'
+            fi
+            echo '```'
+            grep -E '^Transferred:|^Checks:|^Deleted:|^Elapsed' /tmp/rclone.log || tail -n1 /tmp/rclone.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Purge cache
         if: ${{ inputs.deploy }}
