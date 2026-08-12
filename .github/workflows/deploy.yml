@@ -69,6 +69,11 @@ jobs:
         working-directory: tools/notion-sync
         run: go run ./cmd/gen-llms-txt
 
+      - name: Generate search index
+        if: ${{ inputs.deploy }}
+        working-directory: tools/notion-sync
+        run: go run ./cmd/gen-search-index
+
       - name: Install Hugo
         if: ${{ inputs.deploy }}
         run: |
@@ -101,10 +106,11 @@ jobs:
       - name: Purge cache
         if: ${{ inputs.deploy }}
         env:
-          PURGE_URL: ${{ secrets.PURGE_ASSET_URL }}
+          PURGE_URL_CSS: ${{ secrets.PURGE_ASSET_URL }}
+          PURGE_URL_JS: ${{ secrets.PURGE_ASSET_URL_JS }}
         run: |
           curl -fsS -X POST \
             "https://api.cloudflare.com/client/v4/zones/${{ secrets.CLOUDFLARE_ZONE_ID }}/purge_cache" \
             -H "Authorization: Bearer ${{ secrets.CLOUDFLARE_PURGE_TOKEN }}" \
             -H "Content-Type: application/json" \
-            --data "{\"files\":[\"$PURGE_URL\"]}"
+            --data "{\"files\":[\"$PURGE_URL_CSS\",\"$PURGE_URL_JS\"]}"
