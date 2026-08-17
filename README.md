@@ -1,3 +1,3 @@
-## CMS Sync and Deploy
+## Workflows
 
-[https://github.com/ancknoin/ancientknowledge-deploy/actions/workflows/deploy.yml](https://github.com/ancknoin/ancientknowledge-deploy/actions/workflows/deploy.yml)
+[CMS Sync and Deploy](https://github.com/ancknoin/deploy/actions/workflows/deploy.yml)
