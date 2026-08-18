@@ -73,6 +73,21 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Sweep deleted content
+        if: ${{ !inputs.skip_cms_sync }}
+        working-directory: tools/notion-sync
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+        run: |
+          set -o pipefail
+          go run ./cmd/notion-sync sweep -content ../../content -delete -v 2>&1 | tee /tmp/sweep.log
+          {
+            echo "## Deletion sweep"
+            echo '```'
+            grep -E "^sweep:|^  \[|orphan\(s\)|^removed |Nothing to do" /tmp/sweep.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Content diff
         if: ${{ !inputs.skip_cms_sync }}
         run: |
