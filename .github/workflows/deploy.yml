@@ -1,8 +1,9 @@
 name: Sync & Deploy
 
 on:
-  schedule:
-    - cron: "30 0 * * *" # 06:00 IST daily
+  # schedule:
+  #   - cron: "30 0 * * *" # 06:00 IST daily
+  # Commented out 2026-08-27 - deploys are being triggered manually for now.
   workflow_dispatch:
     inputs:
       skip_cms_sync:
