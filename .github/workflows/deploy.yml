@@ -138,6 +138,11 @@ jobs:
         working-directory: tools/notion-sync
         run: go run ./cmd/gen-search-index
 
+      - name: Generate leaf nav
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
+        working-directory: tools/notion-sync
+        run: go run ./cmd/gen-leaf-nav
+
       - name: Install Hugo
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.deploy }}
         run: |
